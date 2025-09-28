@@ -1,0 +1,22 @@
+version: "3.9"
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres       # matches username
+      POSTGRES_PASSWORD: root       # matches password
+      POSTGRES_DB: skylarkdb        # matches database name
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: mediamtx
+    ports:
+      - "8554:8554"
+      - "8889:8889"
+
+volumes:
+  db_data:
