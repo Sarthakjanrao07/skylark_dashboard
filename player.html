@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>HLS Player</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</head>
+<body>
+  <h2>Camera Stream: cam1</h2>
+  <video id="video" controls autoplay></video>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<script>
+  const video = document.getElementById('video');
+  if (Hls.isSupported()) {
+    const hls = new Hls();
+    hls.loadSource('http://localhost:8888/cam1/index.m3u8');
+ // use 'cam1' here
+    hls.attachMedia(video);
+  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = 'http://localhost:8888/cam1/index.m3u8';
+  }
+</script>
+
+</body>
+</html>

@@ -1,22 +1,83 @@
-version: "3.9"
+# version: "3.9"
+# services:
+#   db:
+#     image: postgres:15
+#     environment:
+#       POSTGRES_USER: postgres       # matches username
+#       POSTGRES_PASSWORD: root       # matches password
+#       POSTGRES_DB: skylarkdb        # matches database name
+#     ports:
+#       - "5432:5432"
+#     volumes:
+#       - db_data:/var/lib/postgresql/data
+
+#   mediamtx:
+#     image: bluenviron/mediamtx:latest
+#     container_name: mediamtx
+#     ports:
+#       - "8554:8554"
+#       - "8889:8889"
+
+# volumes:
+#   db_data:
+
+
+version: '3.8'
+
 services:
-  db:
-    image: postgres:15
+  # Database
+  postgres:
+    image: postgres:14
     environment:
-      POSTGRES_USER: postgres       # matches username
-      POSTGRES_PASSWORD: root       # matches password
-      POSTGRES_DB: skylarkdb        # matches database name
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: root
+      POSTGRES_DB: skylarkdb
     ports:
       - "5432:5432"
     volumes:
-      - db_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
 
+  # Backend API
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+      - "3001:3001"
+    environment:
+      DATABASE_URL: "postgresql://postgres:root@postgres:5432/skylarkdb?schema=public"
+      JWT_SECRET: "5edeaf89ab9da8a130646188d3f1c02d4d66142d50f313d15532accff8478830"
+    depends_on:
+      - postgres
+
+  # Frontend
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: "http://localhost:3000"
+    depends_on:
+      - backend
+
+  # Worker Service
+  worker:
+    build: ./worker
+    ports:
+      - "8080:8080"
+    depends_on:
+      - backend
+      - mediamtx
+
+  # MediaMTX
   mediamtx:
     image: bluenviron/mediamtx:latest
-    container_name: mediamtx
     ports:
-      - "8554:8554"
-      - "8889:8889"
+      - "8554:8554"   # RTSP
+      - "8889:8889"   # WebRTC
+      - "9997:9997"   # API
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml
+    command: /mediamtx /mediamtx.yml
 
 volumes:
-  db_data:
+  postgres_data:

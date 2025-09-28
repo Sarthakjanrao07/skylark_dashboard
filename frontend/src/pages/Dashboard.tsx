@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { 
   Typography, 
   Card, 
@@ -57,7 +57,9 @@ import {
   Collapse,
   Zoom,
   Backdrop,
-  Modal
+  Modal,
+  AlertTitle,
+  LinearProgress
 } from "@mui/material";
 import { useAuth } from "../auth/AuthProvider";
 import VideocamIcon from '@mui/icons-material/Videocam';
@@ -95,14 +97,19 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import LoadingButton from '@mui/lab/LoadingButton';
+import ReplayIcon from '@mui/icons-material/Replay';
+import WarningIcon from '@mui/icons-material/Warning';
+import LiveTvIcon from '@mui/icons-material/LiveTv';
+import HdIcon from '@mui/icons-material/Hd';
 
-// Updated Camera interface to match backend
+// Updated Camera interface to include stream URL
 interface Camera {
   id: number;
   name: string;
   location?: string;
   enabled: boolean; // This represents online/offline status
   rtspUrl?: string;
+  streamUrl?: string; // WebRTC stream URL
 }
 
 // Updated Alert interface to match backend
@@ -135,6 +142,281 @@ function TabPanel(props: TabPanelProps) {
   );
 }
 
+// Video Stream Component with WebRTC support
+const VideoStream = ({ camera }: { camera: Camera }) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [streamError, setStreamError] = useState<string | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [streamReady, setStreamReady] = useState(false);
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  
+  useEffect(() => {
+    if (camera.enabled && camera.streamUrl && videoRef.current) {
+      setIsConnecting(true);
+      setStreamError(null);
+      
+      // Initialize WebRTC peer connection
+      const initWebRTC = async () => {
+        try {
+          // Create a new peer connection
+          const peerConnection = new RTCPeerConnection({
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' }
+            ]
+          });
+          
+          peerConnectionRef.current = peerConnection;
+          
+          // Handle incoming tracks
+          peerConnection.ontrack = (event) => {
+            if (videoRef.current) {
+              streamRef.current = event.streams[0];
+              videoRef.current.srcObject = streamRef.current;
+              setStreamReady(true);
+              setIsConnecting(false);
+            }
+          };
+          
+          // Handle ICE candidates
+          peerConnection.onicecandidate = (event) => {
+            if (event.candidate) {
+              // In a real implementation, you would send this to the signaling server
+              // For this example, we'll assume trickle ICE isn't needed
+            }
+          };
+          
+          // Create and send offer
+          const offer = await peerConnection.createOffer();
+          await peerConnection.setLocalDescription(offer);
+          
+          // Send offer to signaling server (this would be your backend/MediaMTX)
+          const response = await fetch(camera.streamUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/sdp'
+            },
+            body: offer.sdp
+          });
+          
+          if (!response.ok) {
+            throw new Error(`Failed to get stream: ${response.status}`);
+          }
+          
+          // Set remote description
+          const answer = await response.text();
+          await peerConnection.setRemoteDescription({
+            type: 'answer',
+            sdp: answer
+          });
+          
+        } catch (error) {
+          console.error('WebRTC error:', error);
+          setStreamError(`Stream error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          setIsConnecting(false);
+          setStreamReady(false);
+        }
+      };
+      
+      initWebRTC();
+      
+      // Cleanup function
+      return () => {
+        if (peerConnectionRef.current) {
+          peerConnectionRef.current.close();
+          peerConnectionRef.current = null;
+        }
+        if (videoRef.current) {
+          videoRef.current.srcObject = null;
+        }
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(track => track.stop());
+          streamRef.current = null;
+        }
+      };
+    } else {
+      // Reset states if camera is disabled or no stream URL
+      setIsConnecting(false);
+      setStreamReady(false);
+      setStreamError(null);
+      if (peerConnectionRef.current) {
+        peerConnectionRef.current.close();
+        peerConnectionRef.current = null;
+      }
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+      }
+    }
+  }, [camera.enabled, camera.streamUrl]);
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement && videoRef.current) {
+      if (videoRef.current.requestFullscreen) {
+        videoRef.current.requestFullscreen();
+        setIsFullscreen(true);
+      }
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+        setIsFullscreen(false);
+      }
+    }
+  };
+
+  const handleRetry = () => {
+    if (camera.enabled && camera.streamUrl) {
+      setIsConnecting(true);
+      setStreamError(null);
+      setStreamReady(false);
+    }
+  };
+
+  return (
+    <Box sx={{ position: 'relative', width: '100%', height: '100%' }}>
+      {/* Loading overlay */}
+      {isConnecting && (
+        <Box 
+          sx={{ 
+            position: 'absolute', 
+            top: 0, 
+            left: 0, 
+            right: 0, 
+            bottom: 0, 
+            display: 'flex', 
+            flexDirection: 'column',
+            alignItems: 'center', 
+            justifyContent: 'center',
+            bgcolor: 'rgba(0, 0, 0, 0.7)',
+            zIndex: 10
+          }}
+        >
+          <CircularProgress sx={{ mb: 2 }} />
+          <Typography variant="body2" color="white">
+            Connecting to WebRTC stream...
+          </Typography>
+        </Box>
+      )}
+      
+      {/* Error overlay */}
+      {streamError && (
+        <Box 
+          sx={{ 
+            position: 'absolute', 
+            top: 0, 
+            left: 0, 
+            right: 0, 
+            bottom: 0, 
+            display: 'flex', 
+            flexDirection: 'column',
+            alignItems: 'center', 
+            justifyContent: 'center',
+            bgcolor: 'rgba(0, 0, 0, 0.8)',
+            zIndex: 10,
+            p: 2
+          }}
+        >
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {streamError}
+          </Alert>
+          <Button 
+            variant="contained" 
+            startIcon={<ReplayIcon />}
+            onClick={handleRetry}
+          >
+            Retry
+          </Button>
+        </Box>
+      )}
+      
+      {/* Video element - now using srcObject for WebRTC */}
+      <video
+        ref={videoRef}
+        autoPlay
+        muted
+        playsInline
+        controls={streamReady}
+        style={{ 
+          width: '100%', 
+          height: '100%', 
+          objectFit: 'cover',
+          backgroundColor: '#000'
+        }}
+      />
+      
+      {/* Stream status overlay */}
+      {!streamError && !isConnecting && (
+        <Box
+          sx={{
+            position: 'absolute',
+            top: 8,
+            left: 8,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+            bgcolor: 'rgba(0, 0, 0, 0.6)',
+            color: 'white',
+            px: 1,
+            py: 0.5,
+            borderRadius: 1,
+            zIndex: 5
+          }}
+        >
+          <LiveTvIcon fontSize="small" />
+          <Typography variant="caption">
+            {streamReady ? 'LIVE' : camera.enabled ? 'CONNECTING...' : 'OFFLINE'}
+          </Typography>
+        </Box>
+      )}
+      
+      {/* Fullscreen button */}
+      {streamReady && (
+        <IconButton
+          sx={{ 
+            position: 'absolute', 
+            bottom: 8, 
+            right: 8, 
+            bgcolor: 'rgba(0, 0, 0, 0.5)',
+            color: 'white',
+            '&:hover': { bgcolor: 'rgba(0, 0, 0, 0.7)' },
+            zIndex: 5
+          }}
+          onClick={toggleFullscreen}
+        >
+          {isFullscreen ? <FullscreenExitIcon /> : <FullscreenIcon />}
+        </IconButton>
+      )}
+      
+      {/* HD indicator */}
+      {streamReady && (
+        <Box
+          sx={{
+            position: 'absolute',
+            top: 8,
+            right: 8,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 0.5,
+            bgcolor: 'rgba(0, 0, 0, 0.6)',
+            color: 'white',
+            px: 1,
+            py: 0.5,
+            borderRadius: 1,
+            zIndex: 5
+          }}
+        >
+          <HdIcon fontSize="small" />
+          <Typography variant="caption">HD</Typography>
+        </Box>
+      )}
+    </Box>
+  );
+};
+
 export default function Dashboard() {
   const { logout } = useAuth();
   const [cameras, setCameras] = useState<Camera[]>([]);
@@ -165,6 +447,8 @@ export default function Dashboard() {
   const [deleteLoading, setDeleteLoading] = useState<number | null>(null);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [cameraToDelete, setCameraToDelete] = useState<Camera | null>(null);
+  const [streamLoading, setStreamLoading] = useState<{[key: number]: boolean}>({});
+  const [streamErrors, setStreamErrors] = useState<{[key: number]: string}>({});
   
   const theme = useTheme();
   const isDesktop = useMediaQuery(theme.breakpoints.up('md'));
@@ -278,6 +562,12 @@ export default function Dashboard() {
         setCameras(prevCameras => prevCameras.filter(camera => camera.id !== cameraToDelete.id));
         // Remove alerts for this camera
         setAlerts(prevAlerts => prevAlerts.filter(alert => alert.cameraId !== cameraToDelete.id));
+        // Clear any stream errors for this camera
+        setStreamErrors(prev => {
+          const newErrors = {...prev};
+          delete newErrors[cameraToDelete.id];
+          return newErrors;
+        });
         
         setSnackbarMessage('Camera deleted successfully');
         setSnackbarOpen(true);
@@ -362,6 +652,15 @@ export default function Dashboard() {
 
   const handleToggleCamera = async (cameraId: number, enabled: boolean) => {
     try {
+      // Set loading state for this camera
+      setStreamLoading(prev => ({...prev, [cameraId]: true}));
+      // Clear any previous errors for this camera
+      setStreamErrors(prev => {
+        const newErrors = {...prev};
+        delete newErrors[cameraId];
+        return newErrors;
+      });
+
       const res = await fetch(`http://localhost:3000/cameras/${cameraId}`, {
         method: 'PATCH',
         headers: { 
@@ -384,10 +683,41 @@ export default function Dashboard() {
         const errorData = await res.json();
         setSnackbarMessage(errorData.error || "Failed to toggle camera");
         setSnackbarOpen(true);
+        // Set error state for this camera
+        setStreamErrors(prev => ({...prev, [cameraId]: errorData.error || "Failed to start stream"}));
       }
     } catch (err) {
       setSnackbarMessage("Network error while toggling camera");
       setSnackbarOpen(true);
+      // Set error state for this camera
+      setStreamErrors(prev => ({...prev, [cameraId]: "Network error while starting stream"}));
+    } finally {
+      // Clear loading state for this camera
+      setStreamLoading(prev => {
+        const newLoading = {...prev};
+        delete newLoading[cameraId];
+        return newLoading;
+      });
+    }
+  };
+
+  const handleVideoError = (cameraId: number, errorMsg: string) => {
+    setStreamErrors(prev => ({...prev, [cameraId]: errorMsg}));
+  };
+
+  const handleVideoReload = (cameraId: number) => {
+    // Clear error for this camera and retry
+    setStreamErrors(prev => {
+      const newErrors = {...prev};
+      delete newErrors[cameraId];
+      return newErrors;
+    });
+    
+    // Find the camera and re-enable it
+    const camera = cameras.find(c => c.id === cameraId);
+    if (camera && camera.enabled) {
+      handleToggleCamera(cameraId, false);
+      setTimeout(() => handleToggleCamera(cameraId, true), 500);
     }
   };
 
@@ -406,19 +736,26 @@ export default function Dashboard() {
     const ws = new WebSocket("ws://localhost:3001");
     
     ws.onopen = () => {
+      console.log("WebSocket connected");
       setWsConnected(true);
     };
     
-    ws.onclose = () => {
+    ws.onclose = (event) => {
+      console.log("WebSocket disconnected:", event.code, event.reason);
       setWsConnected(false);
     };
     
     ws.onmessage = (event) => {
-      const alert: Alert = JSON.parse(event.data);
-      setAlerts((prev) => [alert, ...prev]);
+      try {
+        const alert: Alert = JSON.parse(event.data);
+        setAlerts((prev) => [alert, ...prev]);
+      } catch (error) {
+        console.error("Error parsing WebSocket message:", error);
+      }
     };
     
-    ws.onerror = () => {
+    ws.onerror = (error) => {
+      console.error("WebSocket error:", error);
       setWsConnected(false);
     };
     
@@ -1083,13 +1420,16 @@ export default function Dashboard() {
                             overflow: 'hidden'
                           }}
                         >
-                          {camera.enabled ? (
+                          {camera.enabled && camera.streamUrl ? (
+                            <VideoStream camera={camera} />
+                          ) : camera.enabled ? (
                             <Box textAlign="center">
                               <VideocamIcon sx={{ fontSize: 48, opacity: 0.7 }} />
-                              <Typography variant="body2">Live WebRTC Stream</Typography>
+                              <Typography variant="body2">Initializing stream...</Typography>
                               <Typography variant="caption" display="block" mt={1}>
-                                RTSP: {camera.rtspUrl ? 'Connected' : 'Not configured'}
+                                RTSP: {camera.rtspUrl ? 'Configured' : 'Not configured'}
                               </Typography>
+                              <LinearProgress sx={{ width: '80%', mt: 2 }} />
                             </Box>
                           ) : (
                             <Box textAlign="center">
@@ -1110,6 +1450,7 @@ export default function Dashboard() {
                             fullWidth
                             startIcon={camera.enabled ? <StopIcon /> : <PlayArrowIcon />}
                             onClick={() => handleToggleCamera(camera.id, !camera.enabled)}
+                            disabled={streamLoading[camera.id]}
                           >
                             {camera.enabled ? "Disable" : "Enable"}
                           </Button>
